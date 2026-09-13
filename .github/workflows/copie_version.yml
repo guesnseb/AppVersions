@@ -1,0 +1,58 @@
+name: Deploy Release to Public Repo
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  deploy-public:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Private Repo
+        uses: actions/checkout@v4
+
+      # 1. Récupérer le binaire attaché à la release privée
+      - name: Download Private Release Assets
+        uses: ddsiris/download-release-assets@v1
+        with:
+          tag: ${{ github.event.release.tag_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target: './assets'
+
+      # 2. Publier la release et son .exe sur le dépôt public
+      - name: Publish Release to Public Repo
+        uses: softprops/action-gh-release@v1
+        with:
+          repository: guesnseb/AppVersions
+          token: ${{ secrets.PUBLIC_REPO_TOKEN }}
+          tag_name: ${{ github.event.release.tag_name }}
+          name: Release ${{ github.event.release.tag_name }}
+          body: ${{ github.event.release.body }}
+          files: ./assets/*.exe
+          draft: false
+          prerelease: false
+
+      # 3. Récupérer le dépôt public pour mettre à jour appversion.json
+      - name: Checkout Public Repo
+        uses: actions/checkout@v4
+        with:
+          repository: guesnseb/AppVersions
+          token: ${{ secrets.PUBLIC_REPO_TOKEN }}
+          path: public-repo
+
+      # 4. Mettre à jour appversion.json et pusher sur le dépôt public
+      - name: Update appversion.json
+        run: |
+          cd public-repo
+          # Extraction du numéro de version (ex: v1.0.4 -> 1.0.4)
+          VERSION=$(echo "${{ github.event.release.tag_name }}" | sed 's/^v//')
+          
+          # Mise à jour du JSON avec jq
+          jq --arg v "$VERSION" '.version = $v' appversion.json > tmp.json && mv tmp.json appversion.json
+          
+          # Commit et Push sur le repo public
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appversion.json
+          git diff-index --quiet HEAD || git commit -m "chore: update appversion.json to $VERSION"
+          git push origin main
